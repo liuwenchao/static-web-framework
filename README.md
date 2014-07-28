@@ -5,7 +5,7 @@ This project is trying to provide a solution for static web development with fea
 ## Features
 
 * HTML5 ready. Based on [HTML5 Boilerplate](http://html5boilerplate.com)
-* Layout Engine.
+* Layout Engine. (Requirejs text plugin)[https://github.com/requirejs/text]
 * Template Engine. (transparency)[https://github.com/leonidas/transparency]
 ** Limited to use data-bind for template renderring.
 * Development and Debugging on source files.
