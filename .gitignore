@@ -1,2 +1,4 @@
-html5-boilerplate_v*.zip
 node_modules
+.sass-cache
+dist
+.tmp

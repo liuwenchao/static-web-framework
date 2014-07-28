@@ -1,123 +1,176 @@
-var fs = require('fs');
+'use strict';
 
+// Include Gulp & Tools We'll Use
 var gulp = require('gulp');
-var plugins = require('gulp-load-plugins')(); // Load all gulp plugins
-                                              // automatically and attach
-                                              // them to the `plugins` object
-var template = require('lodash').template;
+var $ = require('gulp-load-plugins')();
+var del = require('del');
+var runSequence = require('run-sequence');
+var browserSync = require('browser-sync');
+var pagespeed = require('psi');
+var reload = browserSync.reload;
 
-var pkg = require('./package.json');
-var dirs = pkg['h5bp-configs'].directories;
+var AUTOPREFIXER_BROWSERS = [
+  'ie >= 10',
+  'ie_mob >= 10',
+  'ff >= 30',
+  'chrome >= 34',
+  'safari >= 7',
+  'opera >= 23',
+  'ios >= 7',
+  'android >= 4.4',
+  'bb >= 10'
+];
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+var paths = {
+  scripts: ['src/js/**/*.js', '!src/js/vendor/**/*.js'],
+  images: 'src/img/**/*',
+  fonts: 'src/font/**',
+  configs: ['src/*','!src/*.html'],
+  html: 'src/**/*.html'
+};
 
-gulp.task('clean', function () {
-    return gulp.src(template('<%= dist %>', dirs), {
-        read: false // Prevent gulp from reading the content of
-                    // the files in order to make this task faster
-    }).pipe(plugins.rimraf());
+// Lint JavaScript
+gulp.task('jshint', function () {
+  return gulp.src(paths.scripts)
+    .pipe(reload({stream: true, once: true}))
+    .pipe($.jshint())
+    .pipe($.jshint.reporter('jshint-stylish'))
+    .pipe($.if(!browserSync.active, $.jshint.reporter('fail')));
 });
 
-gulp.task('copy', [
-    'copy:.htaccess',
-    'copy:index.html',
-    'copy:jquery',
-    'copy:main.css',
-    'copy:misc',
-    'copy:normalize'
+// Optimize Images
+gulp.task('images', function () {
+  return gulp.src(paths.images)
+    .pipe($.cache($.imagemin({
+      progressive: true,
+      interlaced: true
+    })))
+    .pipe(gulp.dest('dist/img'))
+    .pipe($.size({title: 'images'}));
+});
+
+// Copy All Config Files At The Root Level (src)
+gulp.task('configs', function () {
+  return gulp.src(paths.configs, {dot: true})
+    .pipe(gulp.dest('dist'))
+    .pipe($.size({title: 'copy'}));
+});
+
+// Copy Web Fonts To Dist
+gulp.task('fonts', function () {
+  return gulp.src(paths.fonts)
+    .pipe(gulp.dest('dist/font'))
+    .pipe($.size({title: 'font'}));
+});
+
+
+// Automatically Prefix CSS
+gulp.task('styles:css', function () {
+  return gulp.src('src/css/**/*.css')
+    .pipe($.changed('src/css'))
+    .pipe($.autoprefixer(AUTOPREFIXER_BROWSERS))
+    .pipe(gulp.dest('src/css'))
+    .pipe($.size({title: 'styles:css'}));
+});
+
+// Compile Any Sass Files You Added (src/scss)
+// gulp.task('styles:scss', function () {
+//   return gulp.src(['src/css/**/*.scss'])
+//     .pipe($.rubySass({
+//       style: 'expanded',
+//       precision: 10,
+//       loadPath: ['src/css']
+//     }))
+//     .on('error', console.error.bind(console))
+//     .pipe($.autoprefixer(AUTOPREFIXER_BROWSERS))
+//     .pipe(gulp.dest('.tmp/css'))
+//     .pipe($.size({title: 'styles:scss'}));
+// });
+
+// Output Final CSS Styles
+gulp.task('styles', [
+  // 'styles:scss', 
+  'styles:css'
 ]);
 
-gulp.task('copy:.htaccess', function () {
-    return gulp.src('node_modules/server-configs-apache/src/.htaccess')
-               .pipe(plugins.replace(/# ErrorDocument/g, "ErrorDocument"))
-               .pipe(gulp.dest(template('<%= dist %>', dirs)));
+// Scan Your HTML For Assets & Optimize Them
+gulp.task('html', function () {
+  return gulp.src('src/**/*.html')
+    .pipe($.useref.assets())
+    // Concatenate And Minify JavaScript
+    .pipe($.if('*.js', $.uglify()))
+    // Remove Any Unused CSS
+    .pipe($.if('*.css', $.uncss({
+      html: [
+        'src/index.html'
+      ],
+      // CSS Selectors for UnCSS to ignore
+      ignore: []
+    })))
+    // Concatenate And Minify Styles
+    .pipe($.if('*.css', $.csso()))
+    .pipe($.useref.restore())
+    .pipe($.useref())
+    // Minify Any HTML
+    .pipe($.if('*.html', $.minifyHtml()))
+    // Output Files
+    .pipe(gulp.dest('dist'))
+    .pipe($.size({title: 'html'}));
 });
 
-gulp.task('copy:index.html', function () {
-    return gulp.src(template('<%= src %>/index.html', dirs))
-               .pipe(plugins.replace(/{{JQUERY_VERSION}}/g, pkg.devDependencies.jquery))
-               .pipe(gulp.dest(template('<%= dist %>', dirs)));
+// Clean Output Directory
+gulp.task('clean', del.bind(null, ['.tmp', 'dist']));
+
+// Watch Files For Changes & Reload
+gulp.task('serve', function () {
+  browserSync({
+    notify: false,
+    // Run as an https by uncommenting 'https: true'
+    // Note: this uses an unsigned certificate which on first access
+    //       will present a certificate warning in the browser.
+    // https: true,
+    server: {
+      baseDir: ['.tmp', 'src']
+    }
+  });
+
+  gulp.watch(['src/**/*.html'], reload);
+  // gulp.watch(['src/scss/**/*.scss'], ['styles:scss']);
+  gulp.watch(['{.tmp,src}/css/**/*.css'], ['styles:css', reload]);
+  gulp.watch(['src/js/**/*.js'], ['jshint']);
+  gulp.watch(['src/img/**/*'], reload);
 });
 
-gulp.task('copy:jquery', function () {
-    return gulp.src(['node_modules/jquery/dist/jquery.min.js'])
-               .pipe(plugins.rename('jquery-' + pkg.devDependencies.jquery + '.min.js'))
-               .pipe(gulp.dest(template('<%= dist %>/js/vendor', dirs)));
+// Build and serve the output from the dist build
+gulp.task('serve:dist', ['default'], function () {
+  browserSync({
+    notify: false,
+    // Run as an https by uncommenting 'https: true'
+    // Note: this uses an unsigned certificate which on first access
+    //       will present a certificate warning in the browser.
+    // https: true,
+    server: {
+      baseDir: 'dist'
+    }
+    
+  });
 });
 
-gulp.task('copy:main.css', function () {
-
-    var banner = '/*! HTML5 Boilerplate v' + pkg.version +
-                    ' | ' + pkg.license.type + ' License' +
-                    ' | ' + pkg.homepage + ' */\n\n';
-
-    return gulp.src(template('<%= src %>/css/main.css', dirs))
-               .pipe(plugins.header(banner))
-               .pipe(gulp.dest(template('<%= dist %>/css', dirs)));
-
+// Build Production Files, the Default Task
+gulp.task('default', ['clean'], function (cb) {
+  runSequence('styles', ['jshint', 'html', 'images', 'fonts', 'configs'], cb);
 });
 
+// Run PageSpeed Insights
+// Update `url` below to the public URL for your site
+gulp.task('pagespeed', pagespeed.bind(null, {
+  // By default, we use the PageSpeed Insights
+  // free (no API key) tier. You can use a Google
+  // Developer API key if you have one. See
+  // http://goo.gl/RkN0vE for info key: 'YOUR_API_KEY'
+  url: 'https://example.com',
+  strategy: 'mobile'
+}));
 
-gulp.task('copy:misc', function () {
-    return gulp.src([
-
-        // Copy all files
-        template('<%= src %>/**/*', dirs),
-
-        // Exclude the following files
-        // (other tasks will handle the copying of these files)
-        template('!<%= src %>/css/main.css', dirs),
-        template('!<%= src %>/index.html', dirs)
-
-    ], {
-
-        // Include hidden files by default
-        dot: true
-
-    }).pipe(gulp.dest(template('<%= dist %>', dirs)));
-});
-
-gulp.task('copy:normalize', function () {
-    return gulp.src('node_modules/normalize.css/normalize.css')
-               .pipe(gulp.dest(template('<%= dist %>/css', dirs)));
-});
-
-gulp.task('jshint', function () {
-    return gulp.src(template('<%= src %>/js/*.js', dirs))
-               .pipe(plugins.jshint())
-               .pipe(plugins.jshint.reporter('jshint-stylish'))
-               .pipe(plugins.jshint.reporter('fail'));
-});
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-gulp.task('archive', function (done) {
-
-    var archiveName = pkg.name + '_v' + pkg.version + '.zip';
-    var archiver = require('archiver')('zip');
-    var output = fs.createWriteStream(archiveName);
-
-    output.on('close', done);
-
-    archiver.bulk([{
-        cwd: template('<%= dist %>', dirs),
-        dot: true,
-        expand: true,
-        src: ['**']
-    }]);
-
-    archiver.pipe(output);
-    archiver.finalize();
-
-    archiver.on('error', function (error) {
-        done();
-        throw error;
-    });
-
-});
-
-gulp.task('build', ['clean', 'jshint'], function () {
-    gulp.start('copy');
-});
-
-gulp.task('default', ['build']);
+// Load custom tasks from the `tasks` directory
+try { require('require-dir')('tasks'); } catch (err) {}
